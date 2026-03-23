@@ -1,18 +1,16 @@
 #pragma once
 
-#include <cstdint>
-
 #include "LevelPeakValue.h"
-#include "rdk/util/SubscriberList.h"
+
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_events/juce_events.h>
-#include <rdk/detail/NonCopyable.h>
+
 #include <readerwriterqueue/readerwriterqueue.h>
 
 /**
  * A level meter class which can be fed measurements from a realtime audio thread and be read from another (UI) thread.
  */
-class LevelMeter : rdk::NonCopyable
+class LevelMeter
 {
 public:
     /**
@@ -83,7 +81,7 @@ public:
     };
 
     /**
-     * Baseclass for other classes which need to receives measurement updates.
+     * Baseclass for other classes which need to receive measurement updates.
      */
     class Subscriber
     {
@@ -101,7 +99,8 @@ public:
         };
 
         Subscriber() = delete;
-        virtual ~Subscriber() = default;
+
+        virtual ~Subscriber();
 
         /**
          * Constructor
@@ -139,25 +138,6 @@ public:
          */
         void reset();
 
-    protected:
-        /**
-         * Subscribes this subscriber to given level meter. This will unsubscribe a previous subscription.
-         * @param levelMeter The level meter to subscribe to.
-         */
-        void subscribeToLevelMeter (LevelMeter& levelMeter);
-
-        /**
-         * Unsubscribes this subscriber from the current level meter. If not subscribed currently this method will have
-         * no effect.
-         */
-        void unsubscribeFromLevelMeter();
-
-        /**
-         * Sets a subscription, destroying the previous one if one existed.
-         * @param subscription The subscription to set.
-         */
-        void setSubscription (rdk::Subscription&& subscription);
-
         /**
          * Called when the level meter was prepared. use this to configure the visual representation of the level meter.
          * @param numChannels Number of channels.
@@ -191,7 +171,7 @@ public:
         /**
          * @return The current scale for this subscriber.
          */
-        const Scale& getScale() const;
+        [[nodiscard]] const Scale& getScale() const;
 
         /**
          * @return The amount of configured channels.
@@ -209,12 +189,19 @@ public:
          */
         void setPeakHoldTimeMs (uint32_t peakHoldTimeMs);
 
+        /**
+         * Sets given level meter as source, unsubscribing from the previously set meter (if any) and subscribing to the
+         * new one.
+         * @param levelMeter The level meter to subscribe to.
+         */
+        void setLevelMeter (LevelMeter* levelMeter);
+
     private:
         const Scale& mScale;
-        rdk::Subscription mSubscription;
         juce::Array<ChannelData> mChannelData;
         double mReturnRateDbPerSecond = LevelMeterConstants::kDefaultReturnRate;
         int mMaxChannels = kDefaultMaxChannels;
+        LevelMeter* mLevelMeter { nullptr };
     };
 
     LevelMeter();
@@ -245,56 +232,26 @@ public:
      * When the queue is full the measurement will be lost.
      * @tparam SampleType The type of the audio sample.
      * @param inputChannelData The audio data to take the measurement from.
+     * @param numChannels The number of channels.
+     * @param numSamples The number of samples in the block.
      */
     template <typename SampleType>
     void measureBlock (const SampleType* const* inputChannelData, int numChannels, int numSamples);
 
-    /**
-     * Subscribes given subscriber to this LevelMeter.
-     * @param subscriber The subscriber to add.
-     * @return A subscription which will keep the subscription alive until it is destroyed.
-     */
-    rdk::Subscription subscribe (Subscriber* subscriber);
-
 private:
-    /**
-     * A timer which is used by all instances of LevelMeter to synchronize all repaints. This keeps the meters steady.
-     */
-    class SharedTimer : private juce::Timer
+    /// Used to share a single timer across all instances of LevelMeter to synchronize them all.
+    /// Should probably be replaced with a JUCE animation callback at some point.
+    struct SharedTimer : juce::Timer
     {
-    public:
-        SharedTimer() = default;
-        ~SharedTimer() override
-        {
-            stopTimer(); // Paranoia.
-        }
-
-        JUCE_DECLARE_NON_COPYABLE (SharedTimer)
-        JUCE_DECLARE_NON_MOVEABLE (SharedTimer)
-
-        /**
-         * Subscribes given level meter to this timer.
-         * @param levelMeter The level meter to subscribe.
-         */
-        void subscribe (LevelMeter& levelMeter)
-        {
-            // Set the timer going if we're about to subscribe the first subscriber.
-            if (mSubscribers.get_num_subscribers() == 0)
-                startTimerHz (LevelMeterConstants::kRefreshRateHz);
-
-            levelMeter.mSharedTimerSubscription = mSubscribers.add (&levelMeter);
-        }
-
-    private:
-        rdk::SubscriberList<LevelMeter> mSubscribers;
+        juce::ListenerList<LevelMeter> subscribers;
 
         void timerCallback() override
         {
             // Stop timer if there are no subscribers.
-            if (mSubscribers.get_num_subscribers() == 0)
+            if (subscribers.isEmpty())
                 stopTimer();
 
-            mSubscribers.call ([] (LevelMeter& s) {
+            subscribers.call ([] (LevelMeter& s) {
                 s.timerCallback();
             });
         }
@@ -306,17 +263,14 @@ private:
         int numChannels = 2;
     } mPreparedToPlayInfo;
 
-    /// Holds subscribers to this level meter.
-    rdk::SubscriberList<Subscriber> mSubscribers;
-
-    /// Holds the available measurements.
-    moodycamel::ReaderWriterQueue<Measurement> mMeasurements { 100 }; // Arbitrary amount.
-
     /// Holds the globally shared timer.
     juce::SharedResourcePointer<SharedTimer> mSharedTimer;
 
-    /// Holds the subscription to the shared timer.
-    rdk::Subscription mSharedTimerSubscription;
+    /// Holds subscribers to this level meter.
+    juce::ListenerList<Subscriber> mSubscribers;
+
+    /// Holds the available measurements.
+    moodycamel::ReaderWriterQueue<Measurement> mMeasurements { 128 }; // Arbitrary amount.
 
     /**
      * Pushes a single measurement into the queue.

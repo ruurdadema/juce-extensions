@@ -2,7 +2,9 @@
 
 LevelMeter::LevelMeter()
 {
-    mSharedTimer->subscribe (*this);
+    if (mSharedTimer->subscribers.isEmpty())
+        mSharedTimer->startTimerHz (LevelMeterConstants::kRefreshRateHz);
+    mSharedTimer->subscribers.add (this);
 }
 
 LevelMeter::~LevelMeter()
@@ -10,6 +12,10 @@ LevelMeter::~LevelMeter()
     mSubscribers.call ([] (Subscriber& s) {
         s.reset();
     });
+
+    mSharedTimer->subscribers.remove (this);
+    if (mSharedTimer->subscribers.isEmpty())
+        mSharedTimer->stopTimer();
 }
 
 void LevelMeter::prepareToPlay (int numChannels)
@@ -20,20 +26,14 @@ void LevelMeter::prepareToPlay (int numChannels)
             s.prepareToPlay (numChannels);
         });
 
-        // Since measurments gets read from the queue on the juce::MessageThread (in response to the timer callback), it
-        // is safe to clear the queue here.
-        while (mMeasurements.pop())
+        // Since measurements gets read from the queue on the juce::MessageThread (in response to the timer callback),
+        // it is safe to clear the queue here.
+        for (size_t i = 0; i < mMeasurements.size_approx() + 2; i++) // Keep the loop bounded
         {
-        };
+            if (!mMeasurements.pop())
+                break;
+        }
     }
-}
-
-rdk::Subscription LevelMeter::subscribe (Subscriber* subscriber)
-{
-    if (subscriber == nullptr)
-        return {};
-    subscriber->prepareToPlay (mPreparedToPlayInfo.numChannels);
-    return mSubscribers.add (subscriber);
 }
 
 template <typename SampleType>
@@ -139,11 +139,6 @@ void LevelMeter::Subscriber::updateWithMeasurement (const Measurement& measureme
         overloaded = true;
 }
 
-void LevelMeter::Subscriber::subscribeToLevelMeter (LevelMeter& levelMeter)
-{
-    setSubscription (levelMeter.subscribe (this));
-}
-
 double LevelMeter::Subscriber::getPeakValue (int const channelIndex)
 {
     if (juce::isPositiveAndBelow (channelIndex, mChannelData.size()))
@@ -176,6 +171,12 @@ const LevelMeter::Scale& LevelMeter::Subscriber::getScale() const
     return mScale;
 }
 
+LevelMeter::Subscriber::~Subscriber()
+{
+    if (mLevelMeter)
+        mLevelMeter->mSubscribers.remove (this);
+}
+
 LevelMeter::Subscriber::Subscriber (const Scale& scale, int const maxChannels) :
     mScale (scale),
     mMaxChannels (maxChannels)
@@ -202,16 +203,21 @@ void LevelMeter::Subscriber::setPeakHoldTimeMs (uint32_t const peakHoldTimeMs)
         peakHoldLevel.setPeakHoldTime (peakHoldTimeMs);
 }
 
-void LevelMeter::Subscriber::unsubscribeFromLevelMeter()
+void LevelMeter::Subscriber::setLevelMeter (LevelMeter* levelMeter)
 {
-    mSubscription.reset();
-    reset();
-}
+    if (levelMeter == mLevelMeter)
+        return;
 
-void LevelMeter::Subscriber::setSubscription (rdk::Subscription&& subscription)
-{
-    mSubscription.reset();
-    mSubscription = std::move (subscription);
+    if (mLevelMeter != nullptr)
+        mLevelMeter->mSubscribers.remove (this);
+
+    mLevelMeter = levelMeter;
+
+    if (mLevelMeter != nullptr)
+    {
+        mLevelMeter->mSubscribers.add (this);
+        prepareToPlay (mLevelMeter->mPreparedToPlayInfo.numChannels);
+    }
 }
 
 void LevelMeter::Subscriber::reset()

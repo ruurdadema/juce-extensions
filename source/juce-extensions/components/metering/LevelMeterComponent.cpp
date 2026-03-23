@@ -17,15 +17,6 @@ LevelMeterComponent::LevelMeterComponent (const LevelMeter::Scale& scale, [[mayb
 {
 }
 
-LevelMeterComponent::LevelMeterComponent (
-    LevelMeter& levelMeter,
-    const LevelMeter::Scale& scale,
-    const Options& options) :
-    LevelMeterComponent (scale, options)
-{
-    subscribeToLevelMeter (levelMeter);
-}
-
 void LevelMeterComponent::measurementUpdatesFinished()
 {
     JUCE_ASSERT_MESSAGE_THREAD;

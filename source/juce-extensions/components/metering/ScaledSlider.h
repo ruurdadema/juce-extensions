@@ -1,5 +1,7 @@
 #pragma once
 
+#include "juce-extensions/audio/metering/LevelMeter.h"
+
 #include <juce_gui_basics/juce_gui_basics.h>
 
 /**
@@ -11,7 +13,10 @@ public:
     ScaledSlider() = default;
 
     explicit ScaledSlider (const juce::String& componentName) : Slider (componentName) {}
-    ScaledSlider (SliderStyle style, TextEntryBoxPosition textBoxPosition) : Slider (style, textBoxPosition) {}
+
+    ScaledSlider (const SliderStyle style, const TextEntryBoxPosition textBoxPosition) : Slider (style, textBoxPosition)
+    {
+    }
 
     /**
      * Constructor
@@ -30,18 +35,18 @@ public:
      * @param textBoxPosition The position of the textbox.
      * @param scale THe scale to apply.
      */
-    ScaledSlider (SliderStyle style, TextEntryBoxPosition textBoxPosition, const LevelMeter::Scale& scale) :
+    ScaledSlider (const SliderStyle style, const TextEntryBoxPosition textBoxPosition, const LevelMeter::Scale& scale) :
         Slider (style, textBoxPosition),
         mScale (scale)
     {
     }
 
-    double proportionOfLengthToValue (double proportion) override
+    double proportionOfLengthToValue (const double proportion) override
     {
         return mScale.calculateLevelDbForProportion (proportion);
     }
 
-    double valueToProportionOfLength (double value) override
+    double valueToProportionOfLength (const double value) override
     {
         return mScale.calculateProportionForLevelDb (value);
     }
